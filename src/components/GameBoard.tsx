@@ -22,6 +22,7 @@ const GameBoard: React.FC<GameBoardProps> = ({
     const [viewportPosition, setViewportPosition] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [isAnimatingMove, setIsAnimatingMove] = useState(false);
 
     const containerRef = useRef<HTMLDivElement>(null);
     
@@ -30,12 +31,52 @@ const GameBoard: React.FC<GameBoardProps> = ({
 
     useEffect(() => {
         if (containerRef.current) {
+            const container = containerRef.current;
             setViewportPosition({
-                x: viewportSize / 2,
-                y: viewportSize / 2
+                x: container.clientWidth / 2,
+                y: container.clientHeight / 2
             });
         }
     }, []);
+
+    useEffect(() => {
+        if (lastMove && isAnimatingMove) {
+            const container = containerRef.current;
+            if (!container) return;
+
+            const targetX = container.clientWidth / 2 - lastMove.x * cellSize;
+            const targetY = container.clientHeight / 2 - lastMove.y * cellSize;
+            
+            // Анимируем перемещение к последнему ходу
+            const startX = viewportPosition.x;
+            const startY = viewportPosition.y;
+            const startTime = performance.now();
+            const duration = 1000; // 1 секунда на анимацию
+
+            const animate = (currentTime: number) => {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Функция плавности (ease-in-out)
+                const easeProgress = progress < 0.5
+                    ? 4 * progress * progress * progress
+                    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+                setViewportPosition({
+                    x: startX + (targetX - startX) * easeProgress,
+                    y: startY + (targetY - startY) * easeProgress
+                });
+
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    setIsAnimatingMove(false);
+                }
+            };
+
+            requestAnimationFrame(animate);
+        }
+    }, [lastMove, isAnimatingMove, cellSize]);
 
     const getCellValue = (x: number, y: number): CellValue => {
         const key = `${x},${y}`;
@@ -43,7 +84,7 @@ const GameBoard: React.FC<GameBoardProps> = ({
     };
 
     const handleCellClick = (x: number, y: number) => {
-        if (!isDragging) {
+        if (!isDragging && !isAnimatingMove) {
             const value = getCellValue(x, y);
             if (!value && isYourTurn) {
                 onCellClick(x, y);
@@ -52,6 +93,7 @@ const GameBoard: React.FC<GameBoardProps> = ({
     };
 
     const handleMouseDown = (e: React.MouseEvent) => {
+        if (isAnimatingMove) return;
         setIsDragging(true);
         setDragStart({
             x: e.clientX - viewportPosition.x,
@@ -60,7 +102,7 @@ const GameBoard: React.FC<GameBoardProps> = ({
     };
 
     const handleMouseMove = (e: React.MouseEvent) => {
-        if (isDragging) {
+        if (isDragging && !isAnimatingMove) {
             setViewportPosition({
                 x: e.clientX - dragStart.x,
                 y: e.clientY - dragStart.y
@@ -102,13 +144,15 @@ const GameBoard: React.FC<GameBoardProps> = ({
         const value = getCellValue(x, y);
         const key = `${x},${y}`;
         const isHoverable = !value && isYourTurn;
+        const isLastMove = lastMove && lastMove.x === x && lastMove.y === y;
 
         return (
             <div
                 key={key}
                 onClick={() => handleCellClick(x, y)}
                 className={`absolute flex items-center justify-center w-[58px] h-[58px] border border-gray-700 bg-gray-800 
-                    transition-all duration-200 ${isHoverable ? 'hover:bg-gray-700 cursor-pointer' : ''}`}
+                    transition-all duration-200 ${isHoverable ? 'hover:bg-gray-700 cursor-pointer' : ''}
+                    ${isLastMove ? 'ring-2 ring-yellow-500' : ''}`}
                 style={{
                     left: x * cellSize,
                     top: y * cellSize,
@@ -116,7 +160,8 @@ const GameBoard: React.FC<GameBoardProps> = ({
                 }}
             >
                 {value && (
-                    <div className="transform transition-transform duration-200 scale-100">
+                    <div className={`transform transition-transform duration-200 scale-100 
+                        ${isLastMove ? 'animate-pulse' : ''}`}>
                         <ServerIcon state={getServerIconState(value)} />
                     </div>
                 )}
@@ -130,11 +175,8 @@ const GameBoard: React.FC<GameBoardProps> = ({
     };
 
     const moveToLastMove = () => {
-        if (lastMove) {
-            setViewportPosition({
-                x: viewportSize / 2 - lastMove.x * cellSize,
-                y: viewportSize / 2 - lastMove.y * cellSize
-            });
+        if (lastMove && !isAnimatingMove) {
+            setIsAnimatingMove(true);
         }
     };
 
@@ -142,12 +184,27 @@ const GameBoard: React.FC<GameBoardProps> = ({
         <div className="relative">
             <div 
                 ref={containerRef}
-                className={`relative w-[800px] h-[800px] bg-gray-900 overflow-hidden mx-auto 
+                className={`relative w-screen h-screen bg-gray-900 overflow-hidden mx-auto 
                     ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
+                onTouchStart={(e) => {
+                    const touch = e.touches[0];
+                    handleMouseDown({
+                        clientX: touch.clientX,
+                        clientY: touch.clientY
+                    } as React.MouseEvent);
+                }}
+                onTouchMove={(e) => {
+                    const touch = e.touches[0];
+                    handleMouseMove({
+                        clientX: touch.clientX,
+                        clientY: touch.clientY
+                    } as React.MouseEvent);
+                }}
+                onTouchEnd={handleMouseUp}
             >
                 <div
                     style={{
@@ -159,13 +216,14 @@ const GameBoard: React.FC<GameBoardProps> = ({
                 </div>
             </div>
             
-            <div className="absolute top-4 right-4 flex flex-col gap-2">
+            <div className="fixed top-4 right-4 flex flex-col gap-2 z-50">
                 {lastMove && (
                     <button
                         onClick={moveToLastMove}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition-colors"
+                        disabled={isAnimatingMove}
                     >
-                        Показать последний ход
+                        Последний ход
                     </button>
                 )}
                 {turnTimeLeft !== undefined && (

@@ -141,7 +141,7 @@ export default function Home() {
             )}
             
             {currentPlayer && (
-                <div className="fixed top-4 left-4 bg-gray-800 rounded p-2">
+                <div className="fixed top-4 left-4 bg-gray-800 rounded p-2 z-50">
                     <PlayerInfo
                         nickname={`${currentPlayer.nickname} (${currentPlayer.score})`}
                         isCurrentTurn={gameState.isYourTurn}
@@ -151,7 +151,7 @@ export default function Home() {
                 </div>
             )}
             {opponent && (
-                <div className="fixed bottom-4 left-4 bg-gray-800 rounded p-2">
+                <div className="fixed bottom-4 left-4 bg-gray-800 rounded p-2 z-50">
                     <PlayerInfo
                         nickname={`${opponent.nickname} (${opponent.score})`}
                         isCurrentTurn={!gameState.isYourTurn}
@@ -161,45 +161,42 @@ export default function Home() {
                 </div>
             )}
             
-            <div className="pt-20 pb-20">
+            <div className="h-screen">
                 {gameState.status === 'waiting' ? (
                     <div className="text-center text-xl">
                         Waiting for opponent to join...
                     </div>
                 ) : (
-                    <>
-                        <div className="max-w-screen-sm mx-auto">
-                            <GameBoard
-                                cells={gameState.cells}
-                                onCellClick={handleMove}
-                                isYourTurn={gameState.isYourTurn}
-                                playerSymbol={gameState.playerSymbol}
-                                lastMove={gameState.lastMove}
-                                turnTimeLeft={gameState.isYourTurn ? turnTimeLeft : undefined}
-                            />
-                        </div>
-                        {gameState.winner && (
-                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                                <div className="bg-gray-800 p-8 rounded-lg text-center">
-                                    <h2 className="text-3xl font-bold mb-4">
-                                        {(gameState.winner === 'X' && currentPlayer?.isAttacker) || 
-                                         (gameState.winner === 'O' && !currentPlayer?.isAttacker)
-                                            ? 'Вы победили!' 
-                                            : 'Вы проиграли!'}
-                                    </h2>
-                                    <div className="text-xl mb-4">
-                                        Счет: {currentPlayer?.nickname} ({currentPlayer?.score}) - {opponent?.nickname} ({opponent?.score})
-                                    </div>
-                                    <button
-                                        onClick={handleNewGame}
-                                        className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-                                    >
-                                        Играть снова
-                                    </button>
-                                </div>
+                    <GameBoard
+                        cells={gameState.cells}
+                        onCellClick={handleMove}
+                        isYourTurn={gameState.isYourTurn}
+                        playerSymbol={gameState.playerSymbol}
+                        lastMove={gameState.lastMove}
+                        turnTimeLeft={gameState.isYourTurn ? turnTimeLeft : undefined}
+                    />
+                )}
+                
+                {gameState.winner && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-gray-800 p-8 rounded-lg text-center">
+                            <h2 className="text-3xl font-bold mb-4">
+                                {(gameState.winner === 'X' && currentPlayer?.isAttacker) || 
+                                 (gameState.winner === 'O' && !currentPlayer?.isAttacker)
+                                    ? 'Вы победили!' 
+                                    : 'Вы проиграли!'}
+                            </h2>
+                            <div className="text-xl mb-4">
+                                Счет: {currentPlayer?.nickname} ({currentPlayer?.score}) - {opponent?.nickname} ({opponent?.score})
                             </div>
-                        )}
-                    </>
+                            <button
+                                onClick={handleNewGame}
+                                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                            >
+                                Играть снова
+                            </button>
+                        </div>
+                    </div>
                 )}
             </div>
         </div>
