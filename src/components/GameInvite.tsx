@@ -1,11 +1,13 @@
 import React from 'react';
+import {APP_URL} from '../../constants';
+
 
 interface GameInviteProps {
     roomId: string;
 }
 
 const GameInvite: React.FC<GameInviteProps> = ({ roomId }) => {
-    const gameUrl = typeof window !== 'undefined' ? `${window.location.origin}?room=${roomId}` : '';
+    const gameUrl = typeof window !== 'undefined' ? `${window.location.origin}${APP_URL}?room=${roomId}` : '';
 
     const shareText = `Присоединяйся ко мне в игре!`;
     

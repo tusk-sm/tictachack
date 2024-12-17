@@ -1,8 +1,19 @@
 import { Server } from 'socket.io';
 import { Server as NetServer } from 'http';
-import { NextApiRequest } from 'next';
-import { NextApiResponseWithSocket } from '../../types/next';
-import { GameState, GameMove } from '../../types/game';
+import { NextApiRequest, NextApiResponse } from 'next';
+// import { NextApiResponseWithSocket } from '../../types/next';
+import { GameState, GameMove, CellValue } from '../../types/game';
+
+
+import {APP_URL} from '../../../constants';
+
+export type NextApiResponseWithSocket = NextApiResponse & {
+    socket: {
+        server: NetServer & {
+            io: Server
+        }
+    }
+}
 
 const games = new Map<string, GameState>();
 
@@ -23,7 +34,7 @@ const createNewGame = (playerId: string): [string, GameState] => {
         isYourTurn: false,
         status: 'waiting',
         turnTimeLimit: 20000,
-        turnStartTime: null,
+        turnStartTime: undefined,
         players: {
             attacker: {
                 id: playerId,
@@ -54,44 +65,45 @@ const joinGame = (roomId: string, playerId: string): GameState | null => {
     return game;
 };
 
-const startNewRound = (game: GameState, firstReadyPlayerId: string): GameState => {
-    // Определяем, кто будет атакующим в новой игре (тот, кто первый нажал "Играть снова")
-    const oldAttacker = game.players.attacker!;
-    const oldDefender = game.players.defender!;
+// const startNewRound = (game: GameState, firstReadyPlayerId: string): GameState => {
+//     // Определяем, кто будет атакующим в новой игре (тот, кто первый нажал "Играть снова")
+//     const oldAttacker = game.players.attacker!;
+//     const oldDefender = game.players.defender!;
 
-    // Определяем, кто первый нажал кнопку
-    const firstPlayer = firstReadyPlayerId === oldAttacker.id ? oldAttacker : oldDefender;
-    const secondPlayer = firstReadyPlayerId === oldAttacker.id ? oldDefender : oldAttacker;
+//     // Определяем, кто первый нажал кнопку
+//     const firstPlayer = firstReadyPlayerId === oldAttacker.id ? oldAttacker : oldDefender;
+//     const secondPlayer = firstReadyPlayerId === oldAttacker.id ? oldDefender : oldAttacker;
 
-    // Сбрасываем состояние игры
-    const newGame: GameState = {
-        ...game,
-        cells: {},
-        currentPlayer: 'X',
-        winner: null,
-        status: 'playing',
-        lastMove: null,
-        turnStartTime: Date.now(),
-        readyForNewGame: {},
-        // Первый нажавший становится атакующим
-        players: {
-            attacker: {
-                ...firstPlayer,
-                isAttacker: true,
-                nickname: 'Heker'
-            },
-            defender: {
-                ...secondPlayer,
-                isAttacker: false,
-                nickname: 'Beluga'
-            }
-        }
-    };
+//     // Сбрасываем состояние игры
+//     const newGame: GameState = {
+//         ...game,
+//         cells: {},
+//         currentPlayer: 'X',
+//         winner: null,
+//         status: 'playing',
+//         lastMove: null,
+//         turnStartTime: Date.now(),
+//         readyForNewGame: {},
+//         // Первый нажавший становится атакующим
+//         players: {
+//             attacker: {
+//                 ...firstPlayer,
+//                 isAttacker: true,
+//                 nickname: 'Heker'
+//             },
+//             defender: {
+//                 ...secondPlayer,
+//                 isAttacker: false,
+//                 nickname: 'Beluga'
+//             }
+//         }
+//     };
 
-    return newGame;
-};
+//     return newGame;
+// };
 
-const checkWinner = (cells: { [key: string]: string }, lastMove: GameMove): string | null => {
+const checkWinner = (cells: { [key: string]: CellValue } , lastMove: GameMove): CellValue => {
+    
     const directions = [
         [0, 1],   // horizontal
         [1, 0],   // vertical
@@ -126,15 +138,15 @@ const checkWinner = (cells: { [key: string]: string }, lastMove: GameMove): stri
 
 const handler = async (req: NextApiRequest, res: NextApiResponseWithSocket) => {
     if (!res.socket.server.io) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const httpServer: NetServer = res.socket.server as any;
         const io = new Server(httpServer, {
-            path: '/api/socket',
+            path: `${APP_URL}/api/socket`,
         });
 
         io.on('connection', (socket) => {
             console.log('Client connected:', socket.id);
-
-            socket.on('createGame', () => {
+            socket.on('createGame', () => {                
                 const [roomId, gameState] = createNewGame(socket.id);
                 socket.join(roomId);
                 socket.emit('gameCreated', { roomId, gameState });
@@ -174,7 +186,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponseWithSocket) => {
                     currentPlayer: 'X',
                     winner: null,
                     status: 'playing',
-                    lastMove: null,
+                    lastMove: undefined,
                     turnStartTime: Date.now()
                 };
 
@@ -230,7 +242,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponseWithSocket) => {
                 game.cells[cellKey] = player;
                 game.lastMove = { x, y, player };
 
-                const winner = checkWinner(game.cells, { x, y, player });
+                const winner = checkWinner(game.cells, { x, y, player, roomId });
                 if (winner) {
                     game.winner = winner;
                     game.status = 'finished';

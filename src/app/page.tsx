@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import GameBoard from '../components/GameBoard';
 import PlayerInfo from '../components/PlayerInfo';
 import GameInvite from '../components/GameInvite';
-import { GameState, Player, GameMove } from '../types/game';
+import { GameState } from '../types/game';
+import {APP_URL} from '../../constants';
 
 let socket: Socket;
 
-export default function Home() {
+function Home() {
     const searchParams = useSearchParams();
     const [roomId, setRoomId] = useState<string>('');
     const [showInvite, setShowInvite] = useState(false);
@@ -27,11 +28,12 @@ export default function Home() {
     const [turnTimeLeft, setTurnTimeLeft] = useState<number>(20000);
 
     useEffect(() => {
-        const roomFromUrl = searchParams.get('room');
+        
+            
         
         if (!socket) {
             socket = io({
-                path: '/api/socket',
+                path: `${APP_URL}/api/socket`,
             });
 
             socket.on('connect', () => {
@@ -57,9 +59,12 @@ export default function Home() {
             });
         }
 
-        if (roomFromUrl) {
-            socket.emit('joinGame', { roomId: roomFromUrl });
-            setRoomId(roomFromUrl);
+        if (searchParams) {
+            const roomFromUrl = searchParams.get('room');
+            if (roomFromUrl) {
+                socket.emit('joinGame', { roomId: roomFromUrl });
+                setRoomId(roomFromUrl);
+            }
         }
 
         return () => {
@@ -72,8 +77,9 @@ export default function Home() {
     useEffect(() => {
         let timer: NodeJS.Timeout;
         if (gameState.isYourTurn && gameState.turnStartTime) {
+            const startTime = gameState.turnStartTime;
             timer = setInterval(() => {
-                const timeLeft = gameState.turnTimeLimit - (Date.now() - gameState.turnStartTime);
+                const timeLeft = gameState.turnTimeLimit - (Date.now() - startTime);
                 setTurnTimeLeft(Math.max(0, timeLeft));
                 if (timeLeft <= 0) {
                     socket.emit('turnTimeout', { roomId });
@@ -84,7 +90,7 @@ export default function Home() {
         return () => clearInterval(timer);
     }, [gameState.isYourTurn, gameState.turnStartTime, gameState.turnTimeLimit, roomId]);
 
-    const handleCreateGame = () => {
+    const handleCreateGame = () => {        
         socket.emit('createGame');
         socket.once('gameCreated', ({ roomId, gameState }: { roomId: string, gameState: GameState }) => {
             setRoomId(roomId);
@@ -130,6 +136,7 @@ export default function Home() {
     }
 
     return (
+        <Suspense>  
         <div className="relative min-h-screen bg-gray-900 text-white">
             {showInvite && <GameInvite roomId={roomId} />}
             
@@ -200,5 +207,16 @@ export default function Home() {
                 )}
             </div>
         </div>
+        </Suspense>
     );
 }
+
+const App = () => {
+    return (
+        <Suspense fallback={<div>Загрузка...</div>}>
+            <Home />
+        </Suspense>
+    );
+};
+
+export default App;

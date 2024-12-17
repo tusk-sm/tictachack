@@ -27,7 +27,6 @@ const GameBoard: React.FC<GameBoardProps> = ({
     const containerRef = useRef<HTMLDivElement>(null);
     
     const cellSize = 60;
-    const viewportSize = 800;
 
     useEffect(() => {
         if (containerRef.current) {

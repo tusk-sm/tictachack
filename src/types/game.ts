@@ -43,7 +43,7 @@ export interface GameState {
         y: number;
         player: 'X' | 'O';
     };
-    turnStartTime?: number;
+    turnStartTime?: number | undefined | null;
     turnTimeLimit: number; // в миллисекундах
     readyForNewGame?: {
         [playerId: string]: boolean;
