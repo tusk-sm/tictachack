@@ -9,6 +9,7 @@ interface GameBoardProps {
     playerSymbol?: 'X' | 'O';
     lastMove?: { x: number; y: number; player: 'X' | 'O' };
     turnTimeLeft?: number;
+    onReturnToMenu?: () => void;
 }
 
 const GameBoard: React.FC<GameBoardProps> = ({ 
@@ -17,7 +18,8 @@ const GameBoard: React.FC<GameBoardProps> = ({
     isYourTurn,
     playerSymbol,
     lastMove,
-    turnTimeLeft 
+    turnTimeLeft ,
+    onReturnToMenu
 }) => {
     const [viewportPosition, setViewportPosition] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
@@ -149,7 +151,7 @@ const GameBoard: React.FC<GameBoardProps> = ({
             <div
                 key={key}
                 onClick={() => handleCellClick(x, y)}
-                className={`absolute flex items-center justify-center w-[58px] h-[58px] border border-gray-700 bg-gray-800 
+                className={`absolute flex items-center justify-center w-[58px] h-[58px] border border-gray-700 bg-gray-800 rounded
                     transition-all duration-200 ${isHoverable ? 'hover:bg-gray-700 cursor-pointer' : ''}
                     ${isLastMove ? 'ring-2 ring-yellow-500' : ''}`}
                 style={{
@@ -164,9 +166,9 @@ const GameBoard: React.FC<GameBoardProps> = ({
                         <ServerIcon state={getServerIconState(value)} />
                     </div>
                 )}
-                {isHoverable && !value && (
+                { !value && (
                     <div className="absolute opacity-20">
-                        <ServerIcon state={getServerIconState(null, true)} />
+                        <ServerIcon state={getServerIconState(null, isHoverable ? true : false)} />
                     </div>
                 )}
             </div>
@@ -215,23 +217,51 @@ const GameBoard: React.FC<GameBoardProps> = ({
                 </div>
             </div>
             
-            <div className="fixed top-4 right-4 flex flex-col gap-2 z-50">
-                {lastMove && (
-                    <button
-                        onClick={moveToLastMove}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition-colors"
-                        disabled={isAnimatingMove}
+            {/* Панель с кнопками в верхней части экрана */}
+            <div className="fixed top-4 left-4 right-4 flex justify-end items-center z-50">
+                
+                
+                {/* Правая группа кнопок */}
+                <div className="flex items-center gap-2">
+                    {/* Таймер (если есть) */}
+                    {turnTimeLeft !== undefined && (
+                        <div className={`px-4 py-4 rounded-md shadow-md ${
+                            turnTimeLeft < 5000 ? 'bg-red-600' : 'bg-gray-700'
+                        }`}>
+                            Осталось: {Math.ceil(turnTimeLeft / 1000)}с
+                        </div>
+                    )}
+                    
+                    {/* Кнопка последнего хода */}
+                    {lastMove && (
+                        <button
+                            onClick={moveToLastMove}
+                            className="px-4 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-md transition-colors flex items-center gap-2"
+                            disabled={isAnimatingMove}
+                            title="Перейти к последнему ходу"
+                        >
+                            {/* Иконка прицела */}
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-8a2 2 0 11-4 0 2 2 0 014 0z" clipRule="evenodd" />
+                            </svg>
+                            <span className="hidden sm:inline"></span>
+                        </button>
+                    )}
+                    {/* Кнопка возврата в главное меню (слева) */}
+                {onReturnToMenu && (
+                    <button 
+                        onClick={onReturnToMenu}
+                        className="px-4 py-4 bg-red-600 hover:bg-red-700 text-white rounded-md shadow-md transition-colors duration-200 flex items-center gap-2"
+                        title="Вернуться в меню"
                     >
-                        Последний ход
+                        {/* Иконка домика */}
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
+                        </svg>
+                        <span className="hidden sm:inline">Вернуться в меню</span>
                     </button>
                 )}
-                {turnTimeLeft !== undefined && (
-                    <div className={`px-4 py-2 rounded ${
-                        turnTimeLeft < 5000 ? 'bg-red-600' : 'bg-gray-700'
-                    }`}>
-                        Осталось: {Math.ceil(turnTimeLeft / 1000)}с
-                    </div>
-                )}
+                </div>
             </div>
         </div>
     );

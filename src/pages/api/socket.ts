@@ -1,21 +1,31 @@
 import { Server } from 'socket.io';
 import { Server as NetServer } from 'http';
 import { NextApiRequest, NextApiResponse } from 'next';
-// import { NextApiResponseWithSocket } from '../../types/next';
-import { GameState, GameMove, CellValue } from '../../types/game';
-
-
-import {APP_URL} from '../../../constants';
+import { CellValue, GameState, Player } from '../../types/game';
+import { APP_URL } from '../../../constants';
+import { validateTelegramInitData } from '../../server/telegram';
+import { saveGameHistory } from '../../server/gameHistory';
+import { notifyOpponentJoined } from '../../server/telegramBot';
 
 export type NextApiResponseWithSocket = NextApiResponse & {
     socket: {
         server: NetServer & {
-            io: Server
-        }
-    }
-}
+            io: Server;
+        };
+    };
+};
+
+type AuthContext = {
+    telegramId: number;
+    nickname: string;
+    username?: string;
+    avatarUrl?: string;
+    roomId: string;
+    chatId?: string;
+};
 
 const games = new Map<string, GameState>();
+const authBySocketId = new Map<string, AuthContext>();
 
 export const config = {
     api: {
@@ -23,110 +33,100 @@ export const config = {
     },
 };
 
-const generateRoomId = () => Math.random().toString(36).substring(2, 8);
+const TURN_TIME_LIMIT_MS = 20000;
 
-const createNewGame = (playerId: string): [string, GameState] => {
-    const roomId = generateRoomId();
-    const gameState: GameState = {
-        currentPlayer: 'X',
-        cells: {},
-        winner: null,
-        isYourTurn: false,
-        status: 'waiting',
-        turnTimeLimit: 20000,
-        turnStartTime: undefined,
-        players: {
-            attacker: {
-                id: playerId,
-                nickname: 'Heker',
-                isAttacker: true,
-                score: 0
-            }
-        },
-        readyForNewGame: {}
-    };
-    games.set(roomId, gameState);
-    return [roomId, gameState];
+const firstValue = (value: unknown): string | undefined => {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value) && value.length > 0) return String(value[0]);
+    return undefined;
 };
 
-const joinGame = (roomId: string, playerId: string): GameState | null => {
-    const game = games.get(roomId);
-    if (!game || game.status !== 'waiting') return null;
+const getPlayerSymbol = (player: Player): 'X' | 'O' => (player.isAttacker ? 'X' : 'O');
 
-    game.players.defender = {
-        id: playerId,
-        nickname: 'Beluga',
-        isAttacker: false,
-        score: 0
-    };
-    game.status = 'playing';
-    game.turnStartTime = Date.now();
-
-    return game;
+const findPlayerBySocket = (game: GameState, socketId: string): Player | null => {
+    if (game.players.attacker?.socketId === socketId) return game.players.attacker;
+    if (game.players.defender?.socketId === socketId) return game.players.defender;
+    return null;
 };
 
-// const startNewRound = (game: GameState, firstReadyPlayerId: string): GameState => {
-//     // Определяем, кто будет атакующим в новой игре (тот, кто первый нажал "Играть снова")
-//     const oldAttacker = game.players.attacker!;
-//     const oldDefender = game.players.defender!;
+const findPlayerByTelegramId = (game: GameState, telegramId: number): Player | null => {
+    if (game.players.attacker?.telegramId === telegramId) return game.players.attacker;
+    if (game.players.defender?.telegramId === telegramId) return game.players.defender;
+    return null;
+};
 
-//     // Определяем, кто первый нажал кнопку
-//     const firstPlayer = firstReadyPlayerId === oldAttacker.id ? oldAttacker : oldDefender;
-//     const secondPlayer = firstReadyPlayerId === oldAttacker.id ? oldDefender : oldAttacker;
+const createPlayer = (ctx: AuthContext, socketId: string, isAttacker: boolean): Player => ({
+    id: String(ctx.telegramId),
+    socketId,
+    telegramId: ctx.telegramId,
+    nickname: ctx.nickname,
+    username: ctx.username,
+    avatarUrl: ctx.avatarUrl,
+    isAttacker,
+    score: 0,
+});
 
-//     // Сбрасываем состояние игры
-//     const newGame: GameState = {
-//         ...game,
-//         cells: {},
-//         currentPlayer: 'X',
-//         winner: null,
-//         status: 'playing',
-//         lastMove: null,
-//         turnStartTime: Date.now(),
-//         readyForNewGame: {},
-//         // Первый нажавший становится атакующим
-//         players: {
-//             attacker: {
-//                 ...firstPlayer,
-//                 isAttacker: true,
-//                 nickname: 'Heker'
-//             },
-//             defender: {
-//                 ...secondPlayer,
-//                 isAttacker: false,
-//                 nickname: 'Beluga'
-//             }
-//         }
-//     };
+const createNewGame = (roomId: string, ctx: AuthContext, socketId: string): GameState => ({
+    currentPlayer: 'X',
+    cells: {},
+    winner: null,
+    isYourTurn: false,
+    status: 'waiting',
+    turnTimeLimit: TURN_TIME_LIMIT_MS,
+    turnStartTime: undefined,
+    players: {
+        attacker: createPlayer(ctx, socketId, true),
+    },
+    readyForNewGame: {},
+    createdAt: Date.now(),
+    roomChatId: ctx.chatId,
+});
 
-//     return newGame;
-// };
+const emitGameState = (io: Server, roomId: string, game: GameState) => {
+    const attacker = game.players.attacker;
+    const defender = game.players.defender;
+    if (!attacker) return;
 
-const checkWinner = (cells: { [key: string]: CellValue } , lastMove: GameMove): CellValue => {
-    
+    io.to(attacker.socketId).emit('gameState', {
+        ...game,
+        playerSymbol: 'X',
+        isYourTurn: game.currentPlayer === 'X',
+    });
+
+    if (defender) {
+        io.to(defender.socketId).emit('gameState', {
+            ...game,
+            playerSymbol: 'O',
+            isYourTurn: game.currentPlayer === 'O',
+        });
+    }
+
+    io.to(roomId).emit('gameStarted', { roomId });
+};
+
+const checkWinner = (
+    cells: { [key: string]: CellValue },
+    x: number,
+    y: number,
+    player: 'X' | 'O',
+): CellValue => {
     const directions = [
-        [0, 1],   // horizontal
-        [1, 0],   // vertical
-        [1, 1],   // diagonal
-        [1, -1],  // other diagonal
+        [0, 1],
+        [1, 0],
+        [1, 1],
+        [1, -1],
     ];
-
-    const { x, y, player } = lastMove;
 
     for (const [dx, dy] of directions) {
         let count = 1;
-        
-        // Check in positive direction
+
         for (let i = 1; i < 5; i++) {
-            const key = `${x + dx * i},${y + dy * i}`;
-            if (cells[key] !== player) break;
+            if (cells[`${x + dx * i},${y + dy * i}`] !== player) break;
             count++;
         }
-        
-        // Check in negative direction
+
         for (let i = 1; i < 5; i++) {
-            const key = `${x - dx * i},${y - dy * i}`;
-            if (cells[key] !== player) break;
+            if (cells[`${x - dx * i},${y - dy * i}`] !== player) break;
             count++;
         }
 
@@ -136,7 +136,17 @@ const checkWinner = (cells: { [key: string]: CellValue } , lastMove: GameMove): 
     return null;
 };
 
-const handler = async (req: NextApiRequest, res: NextApiResponseWithSocket) => {
+const emitInterruption = (io: Server, roomId: string, game: GameState, message: string) => {
+    io.to(roomId).emit('gameInterrupted', {
+        message,
+        attackerScore: game.players.attacker?.score || 0,
+        defenderScore: game.players.defender?.score || 0,
+        attackerName: game.players.attacker?.nickname || 'Игрок 1',
+        defenderName: game.players.defender?.nickname || 'Игрок 2',
+    });
+};
+
+const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => {
     if (!res.socket.server.io) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const httpServer: NetServer = res.socket.server as any;
@@ -145,179 +155,222 @@ const handler = async (req: NextApiRequest, res: NextApiResponseWithSocket) => {
         });
 
         io.on('connection', (socket) => {
-            console.log('Client connected:', socket.id);
-            socket.on('createGame', () => {                
-                const [roomId, gameState] = createNewGame(socket.id);
-                socket.join(roomId);
-                socket.emit('gameCreated', { roomId, gameState });
-            });
+            const initData = firstValue(socket.handshake.auth?.initData) || firstValue(socket.handshake.query.initData);
+            const validated = validateTelegramInitData(initData || '');
 
-            socket.on('joinGame', ({ roomId }) => {
-                const gameState = joinGame(roomId, socket.id);
-                if (gameState) {
-                    socket.join(roomId);
-                    
-                    // Отправляем состояние атакующему игроку
-                    io.to(gameState.players.attacker!.id).emit('gameState', {
-                        ...gameState,
-                        playerSymbol: 'X',
-                        isYourTurn: true
-                    });
+            if (!validated.isValid || !validated.user) {
+                socket.emit('error', { message: 'Не удалось подтвердить Telegram-авторизацию' });
+                socket.disconnect();
+                return;
+            }
 
-                    // Отправляем состояние защищающемуся игроку
-                    socket.emit('gameState', {
-                        ...gameState,
-                        playerSymbol: 'O',
-                        isYourTurn: false
-                    });
+            const roomId =
+                firstValue(socket.handshake.auth?.roomId) ||
+                firstValue(socket.handshake.query.roomId) ||
+                validated.startParam ||
+                validated.chatInstance;
+
+            if (!roomId) {
+                socket.emit('error', { message: 'Не передан идентификатор игровой комнаты' });
+                socket.disconnect();
+                return;
+            }
+
+            const chatId =
+                firstValue(socket.handshake.auth?.chatId) ||
+                firstValue(socket.handshake.query.chatId) ||
+                firstValue(socket.handshake.query.tgChatId);
+
+            const nickname = `${validated.user.first_name}${validated.user.last_name ? ` ${validated.user.last_name}` : ''}`;
+            const authContext: AuthContext = {
+                telegramId: validated.user.id,
+                nickname,
+                username: validated.user.username,
+                avatarUrl: validated.user.photo_url,
+                roomId,
+                chatId,
+            };
+
+            authBySocketId.set(socket.id, authContext);
+            socket.join(roomId);
+
+            const existingGame = games.get(roomId);
+            if (!existingGame) {
+                const game = createNewGame(roomId, authContext, socket.id);
+                games.set(roomId, game);
+                socket.emit('waitingForOpponent');
+                socket.emit('gameState', {
+                    ...game,
+                    playerSymbol: 'X',
+                    isYourTurn: false,
+                });
+            } else {
+                const existingPlayer = findPlayerByTelegramId(existingGame, authContext.telegramId);
+
+                if (existingPlayer) {
+                    existingPlayer.socketId = socket.id;
+                    existingPlayer.nickname = authContext.nickname;
+                    existingPlayer.username = authContext.username;
+                    existingPlayer.avatarUrl = authContext.avatarUrl;
+                    emitGameState(io, roomId, existingGame);
+                } else if (existingGame.status === 'waiting' && !existingGame.players.defender) {
+                    existingGame.players.defender = createPlayer(authContext, socket.id, false);
+                    existingGame.status = 'playing';
+                    existingGame.turnStartTime = Date.now();
+                    existingGame.roomChatId = existingGame.roomChatId || authContext.chatId;
+                    emitGameState(io, roomId, existingGame);
+                    void notifyOpponentJoined(existingGame.roomChatId, authContext.nickname);
                 } else {
-                    socket.emit('error', 'Game not found or already started');
+                    socket.emit('error', { message: 'Комната уже занята' });
+                    socket.disconnect();
+                    return;
                 }
-            });
+            }
 
-            socket.on('readyForNewGame', ({ roomId }) => {
-                const game = games.get(roomId);
-                if (!game) return;
+            socket.on('readyForNewGame', ({ roomId: eventRoomId }) => {
+                const targetRoomId = firstValue(eventRoomId) || authContext.roomId;
+                const game = games.get(targetRoomId);
+                if (!game || !game.players.attacker || !game.players.defender) return;
 
-                // Создаем новую игру
+                const currentPlayer = findPlayerBySocket(game, socket.id);
+                if (!currentPlayer) return;
+
+                const oldAttacker = game.players.attacker;
+                const oldDefender = game.players.defender;
+
+                const attackerNext = currentPlayer.isAttacker ? oldAttacker : { ...oldDefender, isAttacker: true };
+                const defenderNext = currentPlayer.isAttacker ? oldDefender : { ...oldAttacker, isAttacker: false };
+
                 const newGame: GameState = {
                     ...game,
+                    players: {
+                        attacker: attackerNext,
+                        defender: defenderNext,
+                    },
                     cells: {},
                     currentPlayer: 'X',
                     winner: null,
                     status: 'playing',
                     lastMove: undefined,
-                    turnStartTime: Date.now()
+                    turnStartTime: Date.now(),
+                    finishedAt: undefined,
+                    historySaved: false,
                 };
 
-                // Нажавший кнопку становится атакующим
-                const oldAttacker = game.players.attacker!;
-                const oldDefender = game.players.defender!;
-
-                if (socket.id === oldAttacker.id) {
-                    // Атакующий остается атакующим
-                    newGame.players = {
-                        attacker: oldAttacker,
-                        defender: oldDefender
-                    };
-                } else {
-                    // Защищающийся становится атакующим
-                    newGame.players = {
-                        attacker: {
-                            ...oldDefender,
-                            isAttacker: true,
-                            nickname: 'Heker'
-                        },
-                        defender: {
-                            ...oldAttacker,
-                            isAttacker: false,
-                            nickname: 'Beluga'
-                        }
-                    };
-                }
-
-                games.set(roomId, newGame);
-
-                // Отправляем обновленное состояние обоим игрокам
-                io.to(newGame.players.attacker!.id).emit('gameState', {
-                    ...newGame,
-                    playerSymbol: 'X',
-                    isYourTurn: true
-                });
-
-                io.to(newGame.players.defender!.id).emit('gameState', {
-                    ...newGame,
-                    playerSymbol: 'O',
-                    isYourTurn: false
-                });
+                games.set(targetRoomId, newGame);
+                emitGameState(io, targetRoomId, newGame);
             });
 
-            socket.on('move', ({ x, y, player, roomId }) => {
-                const game = games.get(roomId);
+            socket.on('move', ({ x, y, roomId: eventRoomId }) => {
+                const targetRoomId = firstValue(eventRoomId) || authContext.roomId;
+                const game = games.get(targetRoomId);
                 if (!game || game.status !== 'playing') return;
 
+                if (!Number.isInteger(x) || !Number.isInteger(y)) {
+                    socket.emit('error', { message: 'Некорректные координаты хода' });
+                    return;
+                }
+
+                const player = findPlayerBySocket(game, socket.id);
+                if (!player) {
+                    socket.emit('error', { message: 'Игрок не принадлежит этой партии' });
+                    return;
+                }
+
+                const expectedSymbol = getPlayerSymbol(player);
+                if (expectedSymbol !== game.currentPlayer) {
+                    socket.emit('error', { message: 'Сейчас не ваш ход' });
+                    return;
+                }
+
                 const cellKey = `${x},${y}`;
-                if (game.cells[cellKey]) return;
+                if (game.cells[cellKey]) {
+                    socket.emit('error', { message: 'Клетка уже занята' });
+                    return;
+                }
 
-                game.cells[cellKey] = player;
-                game.lastMove = { x, y, player };
+                game.cells[cellKey] = expectedSymbol;
+                game.lastMove = { x, y, player: expectedSymbol };
 
-                const winner = checkWinner(game.cells, { x, y, player, roomId });
+                const winner = checkWinner(game.cells, x, y, expectedSymbol);
                 if (winner) {
                     game.winner = winner;
                     game.status = 'finished';
-                    
-                    // Обновляем счет
+                    game.finishedAt = Date.now();
+
                     if (winner === 'X') {
-                        game.players.attacker!.score = (game.players.attacker!.score || 0) + 1;
+                        game.players.attacker!.score += 1;
                     } else {
-                        game.players.defender!.score = (game.players.defender!.score || 0) + 1;
+                        game.players.defender!.score += 1;
                     }
-                } else {
-                    game.currentPlayer = game.currentPlayer === 'X' ? 'O' : 'X';
-                    game.turnStartTime = Date.now();
+
+                    emitGameState(io, targetRoomId, game);
+                    void saveGameHistory(game, targetRoomId, 'win');
+                    return;
                 }
 
-                // Отправляем обновленное состояние обоим игрокам
-                io.to(game.players.attacker!.id).emit('gameState', {
-                    ...game,
-                    playerSymbol: 'X',
-                    isYourTurn: game.currentPlayer === 'X'
-                });
-
-                io.to(game.players.defender!.id).emit('gameState', {
-                    ...game,
-                    playerSymbol: 'O',
-                    isYourTurn: game.currentPlayer === 'O'
-                });
+                game.currentPlayer = game.currentPlayer === 'X' ? 'O' : 'X';
+                game.turnStartTime = Date.now();
+                emitGameState(io, targetRoomId, game);
             });
 
-            socket.on('turnTimeout', ({ roomId }) => {
-                const game = games.get(roomId);
+            socket.on('turnTimeout', ({ roomId: eventRoomId }) => {
+                const targetRoomId = firstValue(eventRoomId) || authContext.roomId;
+                const game = games.get(targetRoomId);
                 if (!game || game.status !== 'playing') return;
 
-                // Проверяем, действительно ли время истекло
+                const player = findPlayerBySocket(game, socket.id);
+                if (!player) return;
+
+                const expectedSymbol = getPlayerSymbol(player);
+                if (expectedSymbol !== game.currentPlayer) {
+                    return;
+                }
+
                 if (game.turnStartTime && Date.now() - game.turnStartTime > game.turnTimeLimit) {
-                    // Определяем, чей ход был
-                    const timeoutPlayer = game.currentPlayer === 'X' ? 'Heker' : 'Beluga';
-                    
-                    // Передаем ход другому игроку
+                    const timeoutPlayerName = player.nickname;
                     game.currentPlayer = game.currentPlayer === 'X' ? 'O' : 'X';
                     game.turnStartTime = Date.now();
-
-                    // Отправляем уведомление всем игрокам
-                    io.to(roomId).emit('turnTimeout', { player: timeoutPlayer });
-
-                    // Отправляем обновленное состояние обоим игрокам
-                    io.to(game.players.attacker!.id).emit('gameState', {
-                        ...game,
-                        playerSymbol: 'X',
-                        isYourTurn: game.currentPlayer === 'X'
-                    });
-
-                    io.to(game.players.defender!.id).emit('gameState', {
-                        ...game,
-                        playerSymbol: 'O',
-                        isYourTurn: game.currentPlayer === 'O'
-                    });
+                    io.to(targetRoomId).emit('turnTimeout', { player: timeoutPlayerName });
+                    emitGameState(io, targetRoomId, game);
                 }
+            });
+
+            socket.on('leaveGame', ({ roomId: eventRoomId }) => {
+                const targetRoomId = firstValue(eventRoomId) || authContext.roomId;
+                const game = games.get(targetRoomId);
+                if (!game) return;
+
+                const player = findPlayerBySocket(game, socket.id);
+                if (!player) return;
+
+                game.finishedAt = Date.now();
+                emitInterruption(io, targetRoomId, game, `Игрок ${player.nickname} прервал игру`);
+                void saveGameHistory(game, targetRoomId, 'leave');
+                games.delete(targetRoomId);
             });
 
             socket.on('disconnect', () => {
-                console.log('Client disconnected:', socket.id);
-                games.forEach((game, roomId) => {
-                    if (game.players.attacker?.id === socket.id || game.players.defender?.id === socket.id) {
-                        io.to(roomId).emit('playerDisconnected', {
-                            message: 'Opponent disconnected'
-                        });
-                        games.delete(roomId);
-                    }
-                });
+                const disconnectedAuth = authBySocketId.get(socket.id);
+                authBySocketId.delete(socket.id);
+                if (!disconnectedAuth) return;
+
+                const game = games.get(disconnectedAuth.roomId);
+                if (!game) return;
+
+                const disconnectedPlayer = findPlayerBySocket(game, socket.id);
+                if (!disconnectedPlayer) return;
+
+                game.finishedAt = Date.now();
+                emitInterruption(io, disconnectedAuth.roomId, game, `Игрок ${disconnectedPlayer.nickname} отключился`);
+                void saveGameHistory(game, disconnectedAuth.roomId, 'disconnect');
+                games.delete(disconnectedAuth.roomId);
             });
         });
 
         res.socket.server.io = io;
     }
+
     res.end();
 };
 

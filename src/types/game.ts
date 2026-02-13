@@ -9,7 +9,11 @@ export interface Cell {
 
 export interface Player {
     id: string;
-    nickname: string;
+    socketId: string;
+    telegramId?: number;
+    nickname: string;    
+    username?: string;
+    avatarUrl?: string;
     isAttacker: boolean;
     score: number;
 }
@@ -48,6 +52,10 @@ export interface GameState {
     readyForNewGame?: {
         [playerId: string]: boolean;
     };
+    createdAt?: number;
+    finishedAt?: number;
+    historySaved?: boolean;
+    roomChatId?: string;
 }
 
 export interface GameMove {

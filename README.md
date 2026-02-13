@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tic-Tac-Toe Infinite (Telegram Games)
 
-## Getting Started
+Игра «5 в ряд» (крестики-нолики на бесконечном поле) для платформы Telegram Games.
 
-First, run the development server:
+## Что реализовано
+
+- Авторизация через `Telegram WebApp initData` с серверной валидацией подписи.
+- Реальные профили игроков (имя/username/аватар) из Telegram.
+- Матч создается автоматически по `roomId`, который передает бот в URL запуска.
+- Уведомление в чат бота при подключении соперника (если передан `chat_id`).
+- Сохранение истории игр в Postgres (если есть `DATABASE_URL`).
+- Локальный запуск без Postgres работает (история просто не сохраняется).
+
+## Переменные окружения
+
+Пример значений:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+NEXT_PUBLIC_APP_URL=
+TELEGRAM_BOT_TOKEN=123456:ABCDEF...
+TELEGRAM_INITDATA_MAX_AGE_SECONDS=86400
+DATABASE_URL=postgres://user:pass@host:5432/dbname
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Описание
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `NEXT_PUBLIC_APP_URL` — базовый префикс приложения (например, `/games/tictachack`).
+- `TELEGRAM_BOT_TOKEN` — обязательный токен бота для валидации `initData` и отправки уведомлений.
+- `TELEGRAM_INITDATA_MAX_AGE_SECONDS` — срок жизни `auth_date` для Telegram initData.
+- `DATABASE_URL` — опционально; если не задан, запись истории игр отключается.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Запуск
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Приложение запускается на `http://localhost:3001`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Флоу Telegram Games
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Бот открывает игру по URL вида:
 
-## Deploy on Vercel
+   `https://your-domain/<base>?room=<roomId>&chat_id=<telegramChatId>`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+2. Первый игрок попадает в ожидание соперника.
+3. Второй игрок открывает тот же `roomId`, игра стартует автоматически.
+4. Сервер отправляет `sendMessage` в чат о подключении соперника (если есть `chat_id`).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## История игр (Postgres)
+
+При наличии `DATABASE_URL` автоматически создается таблица `game_history`, куда сохраняются:
+
+- игроки (telegram id + имена),
+- итог (победа / выход / дисконнект),
+- счет,
+- время начала и окончания партии.
