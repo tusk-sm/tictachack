@@ -286,6 +286,13 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
             authBySocketId.set(socket.id, authContext);
             socket.join(roomId);
 
+            console.info('socket join room', {
+                roomId,
+                telegramId: authContext.telegramId,
+                nickname: authContext.nickname,
+                hasChatId: Boolean(authContext.chatId),
+            });
+
             const existingGame = games.get(roomId);
             if (!existingGame) {
                 const game = createNewGame(roomId, authContext, socket.id);
@@ -293,6 +300,11 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
 
                 const initiator = getRoomInitiator(roomId);
                 if (initiator?.telegramId && initiator.telegramId !== authContext.telegramId) {
+                    console.info('notifyFriendIsInGame (room creator is not initiator)', {
+                        roomId,
+                        initiatorTelegramId: initiator.telegramId,
+                        joinedTelegramId: authContext.telegramId,
+                    });
                     void notifyFriendIsInGame(initiator.telegramId, roomId);
                 }
 
@@ -321,6 +333,12 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                     const initiator = getRoomInitiator(roomId);
                     const targetTelegramId = initiator?.telegramId || existingGame.players.attacker?.telegramId;
                     if (targetTelegramId) {
+                        console.info('sendOpenGameButtonToUser', {
+                            roomId,
+                            targetTelegramId,
+                            attackerTelegramId: existingGame.players.attacker?.telegramId,
+                            defenderTelegramId: existingGame.players.defender?.telegramId,
+                        });
                         void sendOpenGameButtonToUser(targetTelegramId, roomId);
                     }
                 } else {

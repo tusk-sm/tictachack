@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import crypto from 'crypto';
 import { registerBotChat } from '../../server/userRegistry';
 import { getLeaders, getPlayerStats, type LeaderRow } from '../../server/gameHistory';
-import { registerRoomInitiator } from '../../server/roomRegistry';
+import { consumePendingRoomForUser, registerRoomInitiator } from '../../server/roomRegistry';
 
 export const config = {
   api: {
@@ -254,7 +254,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const inlineMessageId = cq.inline_message_id;
 
   const roomIdFromOpen = isOpenGame ? callbackData.slice('open_game:'.length) : '';
-  const roomId = roomIdFromOpen || inlineMessageId || (chatId && messageId ? `${chatId}_${messageId}` : '');
+  const pendingRoomId = !isOpenGame && from?.id ? consumePendingRoomForUser(from.id) : undefined;
+  const roomId = roomIdFromOpen || pendingRoomId || inlineMessageId || (chatId && messageId ? `${chatId}_${messageId}` : '');
+
+  if (!isOpenGame && gameShortName === 'tictachack' && from?.id && !pendingRoomId) {
+    console.info('No pending roomId for sendGame callback, fallback to derived roomId', {
+      fromId: from.id,
+      hasInlineMessageId: Boolean(inlineMessageId),
+      chatId,
+      messageId,
+    });
+  }
+
+  if (isOpenGame) {
+    console.info('telegram open_game callback', {
+      fromId: from.id,
+      chatId,
+      hasInlineMessageId: Boolean(inlineMessageId),
+      roomId,
+    });
+  }
+
   if (!roomId) {
     await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
       method: 'POST',
@@ -295,7 +315,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ? `${origin}${basePath}?room=${encodeURIComponent(roomId)}&chat_id=${encodeURIComponent(String(chatId))}&authToken=${encodeURIComponent(authToken)}`
     : `${origin}${basePath}?room=${encodeURIComponent(roomId)}&authToken=${encodeURIComponent(authToken)}`;
 
-  await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+  const answerResp = await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -303,6 +323,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       url,
     }),
   });
+
+  if (!answerResp.ok) {
+    const payload = await answerResp.text();
+    console.error('answerCallbackQuery failed', { payload });
+
+    // Попробуем показать пользователю явную ошибку.
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: cq.id,
+        text: 'Не удалось открыть игру. Попробуй обновить чат с ботом и нажать кнопку ещё раз.',
+        show_alert: true,
+      }),
+    });
+  }
 
   if (isOpenGame) {
     return res.status(200).json({ ok: true });

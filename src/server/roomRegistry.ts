@@ -6,6 +6,8 @@ type RoomInfo = {
 
 const registry = new Map<string, RoomInfo>();
 
+const pendingRoomByTelegramId = new Map<number, { roomId: string; createdAt: number }>();
+
 const TTL_MS = 6 * 60 * 60 * 1000;
 
 const cleanup = (): void => {
@@ -13,6 +15,12 @@ const cleanup = (): void => {
   for (const [roomId, info] of registry.entries()) {
     if (now - info.createdAt > TTL_MS) {
       registry.delete(roomId);
+    }
+  }
+
+  for (const [telegramId, info] of pendingRoomByTelegramId.entries()) {
+    if (now - info.createdAt > TTL_MS) {
+      pendingRoomByTelegramId.delete(telegramId);
     }
   }
 };
@@ -27,4 +35,17 @@ export function getRoomInitiator(roomId: string): { telegramId: number; nickname
   const info = registry.get(roomId);
   if (!info) return undefined;
   return { telegramId: info.initiatorTelegramId, nickname: info.initiatorNickname };
+}
+
+export function setPendingRoomForUser(telegramId: number, roomId: string): void {
+  cleanup();
+  pendingRoomByTelegramId.set(telegramId, { roomId, createdAt: Date.now() });
+}
+
+export function consumePendingRoomForUser(telegramId: number): string | undefined {
+  cleanup();
+  const info = pendingRoomByTelegramId.get(telegramId);
+  if (!info) return undefined;
+  pendingRoomByTelegramId.delete(telegramId);
+  return info.roomId;
 }
