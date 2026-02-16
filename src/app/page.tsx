@@ -69,6 +69,12 @@ function Home() {
             return;
         }
 
+        if (!tg.initData) {
+            setStartupError('Telegram не передал данные авторизации (initData). Откройте игру через бота (WebApp).');
+            setRoomResolved(true);
+            return;
+        }
+
         tg.ready();
         const user = tg.initDataUnsafe.user;
         if (user) {

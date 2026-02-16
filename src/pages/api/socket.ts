@@ -159,6 +159,12 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
             const validated = validateTelegramInitData(initData || '');
 
             if (!validated.isValid || !validated.user) {
+                console.warn('Telegram initData validation failed', {
+                    socketId: socket.id,
+                    reason: validated.reason,
+                    hasInitData: Boolean(initData),
+                    initDataLength: initData ? String(initData).length : 0,
+                });
                 socket.emit('error', { message: 'Не удалось подтвердить Telegram-авторизацию' });
                 socket.disconnect();
                 return;
