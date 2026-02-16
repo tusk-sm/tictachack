@@ -5,7 +5,7 @@ import { CellValue, GameState, Player } from '../../types/game';
 import { APP_URL } from '../../../constants';
 import { validateTelegramInitData } from '../../server/telegram';
 import { saveGameHistory } from '../../server/gameHistory';
-import { notifyOpponentJoined, sendOpenGameButtonToUser } from '../../server/telegramBot';
+import { notifyFriendIsInGame, sendOpenGameButtonToUser, sendRoundResultToPlayers } from '../../server/telegramBot';
 import { getTelegramAvatarUrl } from '../../server/telegramProfile';
 import { getRoomInitiator } from '../../server/roomRegistry';
 import crypto from 'crypto';
@@ -290,6 +290,12 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
             if (!existingGame) {
                 const game = createNewGame(roomId, authContext, socket.id);
                 games.set(roomId, game);
+
+                const initiator = getRoomInitiator(roomId);
+                if (initiator?.telegramId && initiator.telegramId !== authContext.telegramId) {
+                    void notifyFriendIsInGame(initiator.telegramId, roomId);
+                }
+
                 socket.emit('waitingForOpponent');
                 socket.emit('gameState', {
                     ...game,
@@ -311,7 +317,6 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                     existingGame.turnStartTime = Date.now();
                     existingGame.roomChatId = existingGame.roomChatId || authContext.chatId;
                     emitGameState(io, roomId, existingGame);
-                    void notifyOpponentJoined(existingGame.roomChatId, authContext.nickname);
 
                     const initiator = getRoomInitiator(roomId);
                     const targetTelegramId = initiator?.telegramId || existingGame.players.attacker?.telegramId;
@@ -404,6 +409,7 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
 
                     emitGameState(io, targetRoomId, game);
                     void saveGameHistory(game, targetRoomId, 'win');
+                    void sendRoundResultToPlayers(game, targetRoomId, 'win');
                     return;
                 }
 
@@ -445,6 +451,7 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                 game.finishedAt = Date.now();
                 emitInterruption(io, targetRoomId, game, `Игрок ${player.nickname} прервал игру`);
                 void saveGameHistory(game, targetRoomId, 'leave');
+                void sendRoundResultToPlayers(game, targetRoomId, 'leave');
                 games.delete(targetRoomId);
             });
 
@@ -462,6 +469,7 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                 game.finishedAt = Date.now();
                 emitInterruption(io, disconnectedAuth.roomId, game, `Игрок ${disconnectedPlayer.nickname} отключился`);
                 void saveGameHistory(game, disconnectedAuth.roomId, 'disconnect');
+                void sendRoundResultToPlayers(game, disconnectedAuth.roomId, 'disconnect');
                 games.delete(disconnectedAuth.roomId);
             });
         });

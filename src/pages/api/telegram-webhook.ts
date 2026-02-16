@@ -135,6 +135,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         inline_query_id: inlineQuery.id,
         is_personal: true,
         cache_time: 0,
+        switch_pm_text: 'Подключить уведомления',
+        switch_pm_parameter: 'notifications',
         results: [
           {
             type: 'game',
