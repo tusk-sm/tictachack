@@ -26,9 +26,30 @@ type TelegramCallbackQuery = {
   };
 };
 
+type TelegramInlineQuery = {
+  id: string;
+  from?: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
+  query?: string;
+};
+
+type TelegramMessage = {
+  message_id: number;
+  chat: {
+    id: number;
+  };
+  text?: string;
+};
+
 type TelegramUpdate = {
   update_id: number;
   callback_query?: TelegramCallbackQuery;
+  inline_query?: TelegramInlineQuery;
+  message?: TelegramMessage;
 };
 
 const buildPublicOrigin = (req: NextApiRequest): string => {
@@ -79,6 +100,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const update = req.body as TelegramUpdate;
+
+  const inlineQuery = update?.inline_query;
+  if (inlineQuery?.id) {
+    await fetch(`https://api.telegram.org/bot${token}/answerInlineQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inline_query_id: inlineQuery.id,
+        is_personal: true,
+        cache_time: 0,
+        results: [
+          {
+            type: 'game',
+            id: 'tictachack',
+            game_short_name: 'tictachack',
+          },
+        ],
+      }),
+    });
+
+    return res.status(200).json({ ok: true });
+  }
+
+  const message = update?.message;
+  if (message?.chat?.id) {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: message.chat.id,
+        text: 'Я помогу начать матч. Нажми «Играть с другом», выбери чат — и отправь карточку игры сопернику.',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: 'Играть с другом',
+                switch_inline_query: 'tictachack',
+              },
+            ],
+          ],
+        },
+      }),
+    });
+
+    return res.status(200).json({ ok: true });
+  }
+
   const cq = update?.callback_query;
 
   if (!cq || !cq.id) {
