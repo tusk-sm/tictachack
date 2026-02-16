@@ -62,23 +62,15 @@ function Home() {
 
 
     useEffect(() => {
+        const authTokenFromUrl = searchParams?.get('authToken') || '';
+
         const tg = window.Telegram?.WebApp;
-        if (!tg) {
-            setStartupError('Игра должна быть открыта из Telegram через бота.');
-            setRoomResolved(true);
-            return;
-        }
-
-        if (!tg.initData) {
-            setStartupError('Telegram не передал данные авторизации (initData). Откройте игру через бота (WebApp).');
-            setRoomResolved(true);
-            return;
-        }
-
-        tg.ready();
-        const user = tg.initDataUnsafe.user;
-        if (user) {
-            setTelegramUser(user);
+        if (tg) {
+            tg.ready();
+            const user = tg.initDataUnsafe.user;
+            if (user) {
+                setTelegramUser(user);
+            }
         }
 
         const roomFromUrl = searchParams?.get('room') || searchParams?.get('tgWebAppStartParam') || '';
@@ -98,7 +90,8 @@ function Home() {
             socket = io({
                 path: `${APP_URL}/api/socket`,
                 auth: {
-                    initData: tg.initData,
+                    initData: tg?.initData,
+                    authToken: authTokenFromUrl || undefined,
                     roomId: roomFromUrl,
                     chatId,
                 }

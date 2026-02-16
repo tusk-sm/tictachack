@@ -6,6 +6,7 @@ import { APP_URL } from '../../../constants';
 import { validateTelegramInitData } from '../../server/telegram';
 import { saveGameHistory } from '../../server/gameHistory';
 import { notifyOpponentJoined } from '../../server/telegramBot';
+import crypto from 'crypto';
 
 export type NextApiResponseWithSocket = NextApiResponse & {
     socket: {
@@ -13,6 +14,46 @@ export type NextApiResponseWithSocket = NextApiResponse & {
             io: Server;
         };
     };
+};
+
+type GameAuthTokenPayload = {
+    v: 1;
+    exp: number;
+    telegramId: number;
+    nickname: string;
+    username?: string;
+    roomId: string;
+    chatId?: string;
+};
+
+const base64UrlDecode = (value: string): string => {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+    return Buffer.from(normalized + pad, 'base64').toString('utf8');
+};
+
+const verifyAuthToken = (token: string, secret: string): { ok: true; payload: GameAuthTokenPayload } | { ok: false; reason: string } => {
+    const parts = token.split('.');
+    if (parts.length !== 2) return { ok: false, reason: 'bad_format' };
+    const [data, sig] = parts;
+    const expected = crypto.createHmac('sha256', secret).update(data).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    if (expected !== sig) return { ok: false, reason: 'bad_signature' };
+
+    let payload: unknown;
+    try {
+        payload = JSON.parse(base64UrlDecode(data));
+    } catch {
+        return { ok: false, reason: 'bad_payload' };
+    }
+
+    if (!payload || typeof payload !== 'object') return { ok: false, reason: 'bad_payload' };
+    const p = payload as Partial<GameAuthTokenPayload>;
+
+    if (p.v !== 1) return { ok: false, reason: 'bad_version' };
+    if (!p.telegramId || !p.nickname || !p.roomId || !p.exp) return { ok: false, reason: 'missing_fields' };
+    if (typeof p.exp !== 'number' || p.exp < Math.floor(Date.now() / 1000)) return { ok: false, reason: 'expired' };
+
+    return { ok: true, payload: p as GameAuthTokenPayload };
 };
 
 type AuthContext = {
@@ -156,25 +197,67 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
 
         io.on('connection', (socket) => {
             const initData = firstValue(socket.handshake.auth?.initData) || firstValue(socket.handshake.query.initData);
-            const validated = validateTelegramInitData(initData || '');
+            const authToken = firstValue(socket.handshake.auth?.authToken) || firstValue(socket.handshake.query.authToken);
+            const authSecret = process.env.TELEGRAM_GAME_AUTH_SECRET || process.env.TELEGRAM_WEBHOOK_SECRET || '';
 
-            if (!validated.isValid || !validated.user) {
-                console.warn('Telegram initData validation failed', {
+            const validated = initData ? validateTelegramInitData(initData || '') : { isValid: false, reason: 'missing_init_data' as const };
+            const tokenValidated = authToken && authSecret ? verifyAuthToken(String(authToken), authSecret) : null;
+
+            const roomIdFromHandshake = firstValue(socket.handshake.auth?.roomId) || firstValue(socket.handshake.query.roomId);
+            const chatIdFromHandshake =
+                firstValue(socket.handshake.auth?.chatId) ||
+                firstValue(socket.handshake.query.chatId) ||
+                firstValue(socket.handshake.query.tgChatId);
+
+            const roomIdFromInitData = validated.isValid ? validated.startParam || validated.chatInstance : undefined;
+            const roomIdFromToken = tokenValidated && tokenValidated.ok ? tokenValidated.payload.roomId : undefined;
+
+            const resolvedRoomId = roomIdFromHandshake || roomIdFromInitData || roomIdFromToken;
+
+            const authContext: AuthContext | null = (() => {
+                if (validated.isValid && validated.user) {
+                    if (!resolvedRoomId) return null;
+
+                    const nickname = `${validated.user.first_name}${validated.user.last_name ? ` ${validated.user.last_name}` : ''}`;
+                    return {
+                        telegramId: validated.user.id,
+                        nickname,
+                        username: validated.user.username,
+                        avatarUrl: validated.user.photo_url,
+                        roomId: resolvedRoomId,
+                        chatId: chatIdFromHandshake,
+                    };
+                }
+
+                if (tokenValidated && tokenValidated.ok) {
+                    return {
+                        telegramId: tokenValidated.payload.telegramId,
+                        nickname: tokenValidated.payload.nickname,
+                        username: tokenValidated.payload.username,
+                        avatarUrl: undefined,
+                        roomId: tokenValidated.payload.roomId,
+                        chatId: tokenValidated.payload.chatId || chatIdFromHandshake,
+                    };
+                }
+
+                return null;
+            })();
+
+            if (!authContext || !authContext.telegramId) {
+                console.warn('Telegram auth failed', {
                     socketId: socket.id,
-                    reason: validated.reason,
+                    initDataReason: validated.reason,
                     hasInitData: Boolean(initData),
                     initDataLength: initData ? String(initData).length : 0,
+                    hasAuthToken: Boolean(authToken),
+                    authTokenReason: tokenValidated && !tokenValidated.ok ? tokenValidated.reason : undefined,
                 });
                 socket.emit('error', { message: 'Не удалось подтвердить Telegram-авторизацию' });
                 socket.disconnect();
                 return;
             }
 
-            const roomId =
-                firstValue(socket.handshake.auth?.roomId) ||
-                firstValue(socket.handshake.query.roomId) ||
-                validated.startParam ||
-                validated.chatInstance;
+            const roomId = resolvedRoomId || authContext.roomId;
 
             if (!roomId) {
                 socket.emit('error', { message: 'Не передан идентификатор игровой комнаты' });
@@ -185,17 +268,11 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
             const chatId =
                 firstValue(socket.handshake.auth?.chatId) ||
                 firstValue(socket.handshake.query.chatId) ||
-                firstValue(socket.handshake.query.tgChatId);
+                firstValue(socket.handshake.query.tgChatId) ||
+                authContext.chatId;
 
-            const nickname = `${validated.user.first_name}${validated.user.last_name ? ` ${validated.user.last_name}` : ''}`;
-            const authContext: AuthContext = {
-                telegramId: validated.user.id,
-                nickname,
-                username: validated.user.username,
-                avatarUrl: validated.user.photo_url,
-                roomId,
-                chatId,
-            };
+            authContext.roomId = roomId;
+            authContext.chatId = chatId;
 
             authBySocketId.set(socket.id, authContext);
             socket.join(roomId);

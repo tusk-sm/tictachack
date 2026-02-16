@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import crypto from 'crypto';
 
 export const config = {
   api: {
@@ -11,6 +12,12 @@ type TelegramCallbackQuery = {
   data?: string;
   game_short_name?: string;
   inline_message_id?: string;
+  from?: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
   message?: {
     message_id: number;
     chat: {
@@ -39,6 +46,21 @@ const normalizeBasePath = (basePath: string): string => {
   return basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
 };
 
+const base64UrlEncode = (value: string): string =>
+  Buffer.from(value)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+
+const signAuthToken = (payload: object, secret: string): string => {
+  const json = JSON.stringify(payload);
+  const data = base64UrlEncode(json);
+  const sig = crypto.createHmac('sha256', secret).update(data).digest('base64');
+  const sigUrl = sig.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return `${data}.${sigUrl}`;
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -60,6 +82,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const cq = update?.callback_query;
 
   if (!cq || !cq.id) {
+    return res.status(200).json({ ok: true });
+  }
+
+  const from = cq.from;
+
+  if (!from?.id) {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        callback_query_id: cq.id,
+        text: 'Не удалось определить пользователя для запуска игры',
+        show_alert: true,
+      }),
+    });
+
     return res.status(200).json({ ok: true });
   }
 
@@ -90,9 +128,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const origin = process.env.PUBLIC_ORIGIN || buildPublicOrigin(req);
   const basePath = normalizeBasePath(process.env.NEXT_PUBLIC_APP_URL || '');
 
+  const authSecret = process.env.TELEGRAM_GAME_AUTH_SECRET || process.env.TELEGRAM_WEBHOOK_SECRET || '';
+  if (!authSecret) {
+    return res.status(500).json({ ok: false, error: 'missing_auth_secret' });
+  }
+
+  const nickname = `${from.first_name || ''}${from.last_name ? ` ${from.last_name}` : ''}`.trim() || 'Игрок';
+  const authToken = signAuthToken(
+    {
+      v: 1,
+      exp: Math.floor(Date.now() / 1000) + 10 * 60,
+      telegramId: from.id,
+      nickname,
+      username: from.username,
+      roomId,
+      chatId: chatId ? String(chatId) : undefined,
+    },
+    authSecret,
+  );
+
   const url = chatId
-    ? `${origin}${basePath}?room=${encodeURIComponent(roomId)}&chat_id=${encodeURIComponent(String(chatId))}`
-    : `${origin}${basePath}?room=${encodeURIComponent(roomId)}`;
+    ? `${origin}${basePath}?room=${encodeURIComponent(roomId)}&chat_id=${encodeURIComponent(String(chatId))}&authToken=${encodeURIComponent(authToken)}`
+    : `${origin}${basePath}?room=${encodeURIComponent(roomId)}&authToken=${encodeURIComponent(authToken)}`;
 
   await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
     method: 'POST',
