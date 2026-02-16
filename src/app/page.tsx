@@ -190,28 +190,6 @@ function Home() {
         }
     };
 
-    const handleReturnToMenu = () => {
-        // Отправляем сообщение серверу о выходе из игры
-        if (roomId && socket && socket.connected) {
-            console.log('Отправляем событие leaveGame для комнаты:', roomId);
-            socket.emit('leaveGame', { roomId });
-        } else {
-            console.log('Нет активной игры или соединения, просто сбрасываем состояние');
-            // Если нет активной игры, просто сбрасываем состояние
-            setGameState({
-                currentPlayer: 'X',
-                cells: {},
-                winner: null,
-                isYourTurn: false,
-                status: 'waiting',
-                players: {},
-                turnTimeLimit: 20000
-            });
-            setRoomId('');
-            setWaitingForOpponent(false);
-        }
-    };
-
     const currentPlayer = gameState.players.attacker?.id === telegramUser?.id?.toString() 
         ? gameState.players.attacker 
         : gameState.players.defender;
@@ -254,12 +232,6 @@ function Home() {
                                 </div>
                             </div>
                         </div>
-                        <button 
-                            onClick={() => setGameInterruptedInfo(null)} 
-                            className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-md transition-colors"
-                        >
-                            Вернуться в меню
-                        </button>
                     </div>
                 </div>
             )}
@@ -343,7 +315,6 @@ function Home() {
                         playerSymbol={gameState.playerSymbol}
                         lastMove={gameState.lastMove}
                         turnTimeLeft={gameState.isYourTurn ? turnTimeLeft : undefined}
-                        onReturnToMenu={handleReturnToMenu}
                     />
                 )}
                 
