@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import crypto from 'crypto';
 import { registerBotChat } from '../../server/userRegistry';
 import { getLeaders, getPlayerStats, type LeaderRow } from '../../server/gameHistory';
+import { registerRoomInitiator } from '../../server/roomRegistry';
 
 export const config = {
   api: {
@@ -39,6 +40,16 @@ type TelegramInlineQuery = {
   query?: string;
 };
 
+type TelegramChosenInlineResult = {
+  from?: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
+  inline_message_id?: string;
+};
+
 type TelegramMessage = {
   message_id: number;
   from?: {
@@ -54,6 +65,7 @@ type TelegramUpdate = {
   update_id: number;
   callback_query?: TelegramCallbackQuery;
   inline_query?: TelegramInlineQuery;
+  chosen_inline_result?: TelegramChosenInlineResult;
   message?: TelegramMessage;
 };
 
@@ -105,6 +117,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const update = req.body as TelegramUpdate;
+
+  const chosen = update?.chosen_inline_result;
+  if (chosen?.inline_message_id && chosen.from?.id) {
+    const from = chosen.from;
+    const nickname = `${from.first_name || ''}${from.last_name ? ` ${from.last_name}` : ''}`.trim() || 'Игрок';
+    registerRoomInitiator(chosen.inline_message_id, from.id, nickname);
+    return res.status(200).json({ ok: true });
+  }
 
   const inlineQuery = update?.inline_query;
   if (inlineQuery?.id) {
@@ -221,7 +241,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const gameShortName = cq.game_short_name;
-  if (gameShortName !== 'tictachack') {
+  const callbackData = (cq.data || '').trim();
+  const isOpenGame = callbackData.startsWith('open_game:');
+  if (!isOpenGame && gameShortName !== 'tictachack') {
     return res.status(200).json({ ok: true });
   }
 
@@ -229,7 +251,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const messageId = cq.message?.message_id;
   const inlineMessageId = cq.inline_message_id;
 
-  const roomId = inlineMessageId || (chatId && messageId ? `${chatId}_${messageId}` : '');
+  const roomIdFromOpen = isOpenGame ? callbackData.slice('open_game:'.length) : '';
+  const roomId = roomIdFromOpen || inlineMessageId || (chatId && messageId ? `${chatId}_${messageId}` : '');
   if (!roomId) {
     await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
       method: 'POST',
@@ -278,6 +301,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       url,
     }),
   });
+
+  if (isOpenGame) {
+    return res.status(200).json({ ok: true });
+  }
 
   return res.status(200).json({ ok: true });
 }

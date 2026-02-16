@@ -37,7 +37,6 @@ async function getPool(): Promise<PgPoolLike | null> {
     // Пример частой ошибки: пароль содержит символ '%' не в формате '%25' или '%XX'.
     // postgres://user:pa%ss@host:5432/db  -> INVALID
     // postgres://user:pa%25ss@host:5432/db -> OK
-    // eslint-disable-next-line no-new
     new URL(databaseUrl);
   } catch (error) {
     console.error('Invalid DATABASE_URL for Postgres:', {

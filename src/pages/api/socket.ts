@@ -7,6 +7,7 @@ import { validateTelegramInitData } from '../../server/telegram';
 import { saveGameHistory } from '../../server/gameHistory';
 import { notifyOpponentJoined, sendOpenGameButtonToUser } from '../../server/telegramBot';
 import { getTelegramAvatarUrl } from '../../server/telegramProfile';
+import { getRoomInitiator } from '../../server/roomRegistry';
 import crypto from 'crypto';
 
 export type NextApiResponseWithSocket = NextApiResponse & {
@@ -311,8 +312,11 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                     existingGame.roomChatId = existingGame.roomChatId || authContext.chatId;
                     emitGameState(io, roomId, existingGame);
                     void notifyOpponentJoined(existingGame.roomChatId, authContext.nickname);
-                    if (existingGame.players.attacker?.telegramId) {
-                        void sendOpenGameButtonToUser(existingGame.players.attacker.telegramId, roomId, existingGame.players.attacker.nickname);
+
+                    const initiator = getRoomInitiator(roomId);
+                    const targetTelegramId = initiator?.telegramId || existingGame.players.attacker?.telegramId;
+                    if (targetTelegramId) {
+                        void sendOpenGameButtonToUser(targetTelegramId, roomId);
                     }
                 } else {
                     socket.emit('error', { message: 'Комната уже занята' });
