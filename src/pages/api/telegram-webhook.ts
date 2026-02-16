@@ -136,7 +136,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             [
               {
                 text: 'Играть с другом',
-                switch_inline_query: 'tictachack',
+                switch_inline_query: '',
               },
             ],
           ],
