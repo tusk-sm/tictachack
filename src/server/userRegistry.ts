@@ -19,7 +19,10 @@ const TABLE = 'telegram_user_chat';
 
 const getPool = async (): Promise<PgPoolLike | null> => {
   const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) return null;
+  if (!databaseUrl) {
+    console.warn('DATABASE_URL is missing; bot chat registry will be in-memory only');
+    return null;
+  }
 
   try {
     // validate URL early
@@ -77,6 +80,7 @@ export function registerBotChat(telegramId: number, botChatId: string): void {
         `,
         [telegramId, botChatId],
       );
+      console.info('Persisted bot chat id', { telegramId, botChatId });
     } catch (error) {
       console.error('Failed to persist bot chat id', { telegramId, error });
     }
@@ -105,6 +109,7 @@ export async function getBotChatIdAsync(telegramId: number): Promise<string | un
     const botChatId = row?.bot_chat_id;
     if (botChatId) {
       registerBotChat(telegramId, botChatId);
+      console.info('Loaded bot chat id from DB', { telegramId, botChatId });
       return botChatId;
     }
   } catch (error) {

@@ -153,6 +153,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const message = update?.message;
   if (message?.chat?.id) {
     if (message.from?.id) {
+      console.info('telegram message update: register bot chat', {
+        fromId: message.from.id,
+        chatId: message.chat.id,
+        text: (message.text || '').slice(0, 64),
+      });
       registerBotChat(message.from.id, String(message.chat.id));
     }
 
