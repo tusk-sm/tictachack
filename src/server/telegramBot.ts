@@ -1,4 +1,4 @@
-import { getBotChatId } from './userRegistry';
+import { getBotChatIdAsync } from './userRegistry';
 import type { GameState } from '../types/game';
 import { setPendingRoomForUser } from './roomRegistry';
 
@@ -14,7 +14,7 @@ const sendGameToTelegramId = async (telegramId: number, roomId: string): Promise
     return false;
   }
 
-  const chatId = getBotChatId(telegramId);
+  const chatId = await getBotChatIdAsync(telegramId);
   if (!chatId) {
     console.info('User has no bot chat id (needs /start to enable notifications)', { telegramId });
     return false;
@@ -68,7 +68,7 @@ const sendMessageToTelegramId = async (telegramId: number, payload: { text: stri
     return false;
   }
 
-  const chatId = getBotChatId(telegramId);
+  const chatId = await getBotChatIdAsync(telegramId);
   if (!chatId) {
     console.info('User has no bot chat id (needs /start to enable notifications)', { telegramId });
     return false;
