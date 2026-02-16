@@ -5,7 +5,8 @@ import { CellValue, GameState, Player } from '../../types/game';
 import { APP_URL } from '../../../constants';
 import { validateTelegramInitData } from '../../server/telegram';
 import { saveGameHistory } from '../../server/gameHistory';
-import { notifyOpponentJoined } from '../../server/telegramBot';
+import { notifyOpponentJoined, sendOpenGameButtonToUser } from '../../server/telegramBot';
+import { getTelegramAvatarUrl } from '../../server/telegramProfile';
 import crypto from 'crypto';
 
 export type NextApiResponseWithSocket = NextApiResponse & {
@@ -195,7 +196,7 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
             path: `${APP_URL}/api/socket`,
         });
 
-        io.on('connection', (socket) => {
+        io.on('connection', async (socket) => {
             const initData = firstValue(socket.handshake.auth?.initData) || firstValue(socket.handshake.query.initData);
             const authToken = firstValue(socket.handshake.auth?.authToken) || firstValue(socket.handshake.query.authToken);
             const authSecret = process.env.TELEGRAM_GAME_AUTH_SECRET || process.env.TELEGRAM_WEBHOOK_SECRET || '';
@@ -257,6 +258,13 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                 return;
             }
 
+            if (!authContext.avatarUrl) {
+                const avatarUrl = await getTelegramAvatarUrl(authContext.telegramId);
+                if (avatarUrl) {
+                    authContext.avatarUrl = avatarUrl;
+                }
+            }
+
             const roomId = resolvedRoomId || authContext.roomId;
 
             if (!roomId) {
@@ -303,6 +311,9 @@ const handler = async (_req: NextApiRequest, res: NextApiResponseWithSocket) => 
                     existingGame.roomChatId = existingGame.roomChatId || authContext.chatId;
                     emitGameState(io, roomId, existingGame);
                     void notifyOpponentJoined(existingGame.roomChatId, authContext.nickname);
+                    if (existingGame.players.attacker?.telegramId) {
+                        void sendOpenGameButtonToUser(existingGame.players.attacker.telegramId, roomId, existingGame.players.attacker.nickname);
+                    }
                 } else {
                     socket.emit('error', { message: 'Комната уже занята' });
                     socket.disconnect();

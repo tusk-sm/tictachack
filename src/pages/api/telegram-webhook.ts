@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import crypto from 'crypto';
+import { registerBotChat } from '../../server/userRegistry';
+import { getLeaders, getPlayerStats, type LeaderRow } from '../../server/gameHistory';
 
 export const config = {
   api: {
@@ -39,6 +41,9 @@ type TelegramInlineQuery = {
 
 type TelegramMessage = {
   message_id: number;
+  from?: {
+    id: number;
+  };
   chat: {
     id: number;
   };
@@ -125,6 +130,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const message = update?.message;
   if (message?.chat?.id) {
+    if (message.from?.id) {
+      registerBotChat(message.from.id, String(message.chat.id));
+    }
+
+    const text = (message.text || '').trim();
+    if (text === '/stats') {
+      const telegramId = message.from?.id;
+      if (!telegramId) {
+        return res.status(200).json({ ok: true });
+      }
+
+      const stats = await getPlayerStats(telegramId);
+      const reply = stats
+        ? `Статистика:\nПобед: ${stats.wins}\nПоражений: ${stats.losses}\nВыходов: ${stats.leaves}\nДисконнектов: ${stats.disconnects}\nВсего игр: ${stats.total}`
+        : 'Статистика недоступна (нет базы данных или нет сыгранных игр).';
+
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: message.chat.id,
+          text: reply,
+        }),
+      });
+
+      return res.status(200).json({ ok: true });
+    }
+
+    if (text === '/leaders') {
+      const leaders = await getLeaders(10);
+      const reply = leaders && leaders.length
+        ? `Лидеры (топ-10):\n${leaders.map((l: LeaderRow, i: number) => `${i + 1}. ${l.name}: ${l.wins} побед`).join('\n')}`
+        : 'Лидеры недоступны (нет базы данных или нет сыгранных игр).';
+
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: message.chat.id,
+          text: reply,
+        }),
+      });
+
+      return res.status(200).json({ ok: true });
+    }
+
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

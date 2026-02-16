@@ -7,6 +7,20 @@ type CacheEntry = {
 
 const cache = new Map<number, CacheEntry>();
 
+type TelegramApiResponse<T> = {
+  ok: boolean;
+  result: T;
+};
+
+type TelegramUserProfilePhotos = {
+  total_count: number;
+  photos: Array<Array<{ file_id: string }>>;
+};
+
+type TelegramFile = {
+  file_path?: string;
+};
+
 const base64UrlEncode = (value: string): string =>
   Buffer.from(value)
     .toString('base64')
@@ -36,8 +50,9 @@ export async function getTelegramAvatarUrl(telegramId: number): Promise<string |
       return undefined;
     }
 
-    const photosJson = (await photosResp.json()) as any;
-    const fileId: string | undefined = photosJson?.result?.photos?.[0]?.slice(-1)?.[0]?.file_id;
+    const photosJson = (await photosResp.json()) as unknown;
+    const photosPayload = photosJson as Partial<TelegramApiResponse<TelegramUserProfilePhotos>>;
+    const fileId: string | undefined = photosPayload.result?.photos?.[0]?.slice(-1)?.[0]?.file_id;
     if (!fileId) {
       cache.set(telegramId, { url: null, expiresAt: now + 10 * 60 * 1000 });
       return undefined;
@@ -54,8 +69,9 @@ export async function getTelegramAvatarUrl(telegramId: number): Promise<string |
       return undefined;
     }
 
-    const fileJson = (await fileResp.json()) as any;
-    const filePath: string | undefined = fileJson?.result?.file_path;
+    const fileJson = (await fileResp.json()) as unknown;
+    const filePayload = fileJson as Partial<TelegramApiResponse<TelegramFile>>;
+    const filePath: string | undefined = filePayload.result?.file_path;
     if (!filePath) {
       cache.set(telegramId, { url: null, expiresAt: now + 10 * 60 * 1000 });
       return undefined;
